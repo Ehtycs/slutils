@@ -20,7 +20,10 @@ class output(object):
 
 def merge_in_gmsh(directory, filter=None):
     """ Plot all files from directory in gmsh
-        after applying filter """
+        after applying filter. Filter is required to be a 
+        function which takes in a list of filenames and returns a list 
+        of filenames to be plotter 
+    """
     if filter == None:
         # by default, plot all .pos files
         filter = lambda fs: [f for f in fs if f[-4:] == ".pos"]
@@ -59,16 +62,18 @@ def _get_name(o):
 
 def lizardify(subs, expr_in, rewrite_overrides={}):
     """ Take a sympy symbolic expression and convert it into 
-    sparselizard's expression object. The function returns a 
-    function which accepts len(args) number of arguments
-    which are fed into the expression to replace the symbols
-    in args.
+    sparselizard's expression object.
 
     Inputs: 
-       args: symbols that are the input arguments 
-       symexpr: the sympy expression
-       userfuns: a dict mapping str -> (expr -> expr) for providing 
-                 custom overrides for specific symbols
+       subs: 
+           a dictionary {sympyexpr: sl.expression/sl.parameter/number} for substituting 
+           symbols present in the sympy expression. 
+       expr_in: 
+           the sympy expression
+       rewrite_overrides: 
+           a dict mapping str -> function(sp.expr,...) sl.expr/parameter/number... for providing 
+           custom overrides for specific functions and sympy expressions other than plain symbols. 
+           E.g. {'tan2': lambda y,x: sl.tan(y/x)}
 
     Example:
        # symbols for coordinates
@@ -78,14 +83,13 @@ def lizardify(subs, expr_in, rewrite_overrides={}):
        # a complicated expression
        a = sp.sin(x) + sp.cos(y)
 
-       # convert to an sl expression 
-       fun = spylizardify((x,y), a)
-       
        # get the fields for coordinates and input them to function
        xf = sl.field("x")
        yf = sl.field("y")
-       myexpr = fun(xf, yf)
-       
+
+       # convert to an sl expression 
+       myexpr = spylizardify({x:xf, y:yf}, a)
+              
        # read in a mesh and write the expression 
        mesh = sl.mesh(<read some mesh in>)
        all = sl.selectall()
@@ -97,7 +101,10 @@ def lizardify(subs, expr_in, rewrite_overrides={}):
     def doit(expr):
         ename = _get_name(expr)
 
-        if ename == "Add":
+        if ename in rewrite_rules:
+            # check if there is a rewrite rule and apply that
+            return rewrite_rules[ename](*map(doit, expr.args))
+        elif ename == "Add":
             return reduce(lambda x,y: x+y, map(doit, expr.args))
         elif ename == "Mul": 
             return reduce(lambda x,y: x*y, map(doit, expr.args))
@@ -115,10 +122,6 @@ def lizardify(subs, expr_in, rewrite_overrides={}):
             return sl.expression(expr.rows, expr.cols, list(map(doit, expr)))
         elif ename == "Symbol":            
             return subs[expr]
-        elif ename in rewrite_rules:
-            # check if there is a rewrite rule
-            return rewrite_rules[ename](*map(doit, expr.args))
-            
         else:
             # number or something like that,
             # sparselizard seems to work best with floats
@@ -128,7 +131,8 @@ def lizardify(subs, expr_in, rewrite_overrides={}):
             except TypeError as e:
                 raise TypeError(f'A term of type "{ename}" could not be converted to a '
                                 "sparselizard expression. This might mean SL doesn't "
-                                f'support it. The full error message was "{e}".')
+                                f'support it. The full error message was "{e}". '
+                                f'The term was {expr}')
 
     return doit(expr_in)
 
